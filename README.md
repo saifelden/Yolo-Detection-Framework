@@ -7,5 +7,5 @@ http://pjreddie.com/media/files/VOCtrainval_11-May-2012.tar
 And the test set can be found here:
 http://pjreddie.com/media/files/VOC2012test.tar
 
-# NOTE: Not All the test set is being annotated around 5000 images are being annotated,it's recommended to use training data for training and validating.
+NOTE: Not All the test set is being annotated around 5000 images are being annotated,it's recommended to use training data for training and validating.
 
