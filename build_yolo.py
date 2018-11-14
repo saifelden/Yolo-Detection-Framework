@@ -24,7 +24,7 @@ def build_yolo_cnn(images_np,output_np,test_images_np,test_output_np):
 		testing_output= test_output_np,iterations_num=2000)
 	quick_test = test_images_np[0:10]
 	cnn.test_classifier_results(quick_test)
-	
+
 def get_input_and_output(from_file=1):
 
 	if from_file == 0:
@@ -52,7 +52,7 @@ def retrain_restored_checkpoint(images_np,output_np,test_images_np,test_output_n
 	cnn = Cnn_Classifier(classifier_name = "Yolo_Pascal",input_shape = input_shape,output_shape= output_shape,define_weights = False)
 	cnn.set_batch_size(70)
 	cnn.retrain_classifier(input_images = images_np,output_classes = output_np,testing_input = test_images_np,testing_output = test_output_np
-		,iterations_num = 0,checkpoint='70')
+		,iterations_num = 0,checkpoint='90')
 
 	quick_test = test_images_np[0:10]
 	cnn.compare_predict_with_true(test_images_np[:10],test_output_np[:10])
@@ -60,8 +60,7 @@ def retrain_restored_checkpoint(images_np,output_np,test_images_np,test_output_n
 
 
 
-
 training_input,training_output,testing_input,testing_output = get_input_and_output()
 retrain_restored_checkpoint(training_input,training_output,testing_input,testing_output)
 
-#370min
+#177m

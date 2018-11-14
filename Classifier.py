@@ -4,12 +4,13 @@ import os
 import random
 import cv2
 from nms import filter_with_nms
+from Data_utils import *
 
 class Cnn_Classifier:
 
-	def __init__(self,classifier_name,input_shape = [None,28,28,1],output_shape = [None,9,9,26],conv_layers = [(32,5),(64,5),(128,3),(256,2),(256,1)]
+	def __init__(self,classifier_name,input_shape = [None,28,28,1],output_shape = [None,9,9,25],conv_layers = [(32,5),(64,5),(128,3),(256,2),(256,1)]
 		,pooling_layers = [1,1,1,0,0],dropout_layers=[1,1,1,1,1], batchnorm_layers = [1,1,1,1,1],activation_type = "relu",pool_type='avg'
-		,learning_rate = 0.0003,dropout=.75,define_weights = True,lambda_obj=1,lambda_noobj=0.5):
+		,learning_rate = 0.0003,dropout=.75,define_weights = True,lambda_obj=5.,lambda_noobj=0.5):
 		
 		self.weights_list = []
 		self.biases_list = []
@@ -106,61 +107,64 @@ class Cnn_Classifier:
 	def build_yolo_loss(self,output_layer):
 
 		obj_idxs = tf.where(self.Output[:,:,:,0] >0)
-
 		true_output_obj = tf.gather_nd(self.Output,obj_idxs)
-
 		predicted_output_obj= tf.gather_nd(output_layer,obj_idxs)
+ 
+		self.obj_x_loss= tf.reduce_sum(tf.square(tf.subtract(predicted_output_obj[:,0],true_output_obj[:,0])))
+		self.obj_y_loss = tf.reduce_sum(tf.square(tf.subtract(predicted_output_obj[:,1],true_output_obj[:,1])))
+		self.obj_width_loss = tf.reduce_sum(tf.square(tf.subtract(predicted_output_obj[:,2],true_output_obj[:,2])))
+		self.obj_height_loss  = tf.reduce_sum(tf.square(tf.subtract(predicted_output_obj[:,3],true_output_obj[:,3])))
+		self.obj_coord = tf.multiply(self.lambda_obj,tf.add(tf.add(self.obj_x_loss,self.obj_y_loss),tf.add(self.obj_height_loss,self.obj_width_loss)))
 
 		noobj_idxs = tf.where(self.Output[:,:,:,0] < 1)
+		true_output_noobj = tf.gather_nd(self.Output,noobj_idxs)
+		predicted_output_noobj= tf.gather_nd(output_layer,noobj_idxs)
 
-		self.lambda_noobj 
-
-		self.obj_x_loss= tf.multiply(self.lamb tf.reduce_sum(tf.square(tf.subtract(predicted_output_obj[:,0],true_output_obj[:,0])))
-
-		self.obj_y_loss = tf.reduce_sum(tf.square(tf.subtract(predicted_output_obj[:,1],true_output_obj[:,1])))
-
-		self.obj_width_loss = tf.reduce_sum(tf.square(tf.subtract(predicted_output_obj[:,2],true_output_obj[:,2])))
-
-		self.obj_height_loss  = tf.reduce_sum(tf.square(tf.subtract(predicted_output_obj[:,3],true_output_obj[:,3])))
+		self.noobj_x_loss = tf.reduce_sum(tf.square(tf.subtract(predicted_output_noobj[:,0],true_output_noobj[:,0])))
+		self.noobj_y_loss = tf.reduce_sum(tf.square(tf.subtract(predicted_output_noobj[:,1],true_output_noobj[:,1])))
+		self.noobj_width_loss = tf.reduce_sum(tf.square(tf.subtract(predicted_output_noobj[:,2],true_output_noobj[:,2])))
+		self.noobj_height_loss  = tf.reduce_sum(tf.square(tf.subtract(predicted_output_noobj[:,3],true_output_noobj[:,3])))
+		self.noobj_coord = tf.multiply(self.lambda_noobj,tf.add(tf.add(self.noobj_x_loss,self.noobj_y_loss),tf.add(self.noobj_height_loss,
+			self.noobj_width_loss)))
 
 		self.probility_loss =  tf.reduce_sum(tf.square(tf.subtract(output_layer[:,:,:,4],self.Output[:,:,:,4])))
 
 		self.classes_loss = tf.reduce_sum(tf.square(tf.subtract(output_layer[:,:,:,5:5+self.number_of_classes],
 			self.Output[:,:,:,5:5+self.number_of_classes])))
 
-		self.total_loss = tf.add(tf.add(tf.add(self.x_loss,self.y_loss),tf.add(self.height_loss,self.width_loss)),
-			tf.add(self.probility_loss,self.classes_loss))
-
-
+		self.total_loss = tf.add(tf.add(self.obj_coord,self.noobj_coord),tf.add(self.probility_loss,self.classes_loss))
 		return self.total_loss
 
 	def calculate_accuracy(self,output_layer):
 
 		obj_idxs = tf.where(self.Output[:,:,:,0] >0)
-
 		true_output_obj = tf.gather_nd(self.Output,obj_idxs)
+		predicted_output_obj = tf.gather_nd(output_layer,obj_idxs)
 
-		predicted_output = tf.gather_nd(output_layer,obj_idxs)
-
-		self.predicted = tf.nn.softmax(predicted_output[:,5:5+self.number_of_classes])
-		self.predicted_labels = tf.argmax(self.predicted,axis = 1)
+		# noobj_idxs = tf.where(self.Output[:,:,:,0] < 1)
+		# true_output_noobj = tf.gather_nd(self.Output,noobj_idxs)
+		# predicted_output_noobj= tf.gather_nd(output_layer,noobj_idxs)
+		
+		self.predicted_labels = tf.argmax(predicted_output_obj,axis = 1)
 		self.true_labels = tf.argmax(true_output_obj[:,5:5+self.number_of_classes],axis = 1)
 		correct = tf.equal(self.predicted_labels,self.true_labels)
 		accuracy = tf.reduce_mean(tf.cast(correct, tf.float32))
 		tf.add_to_collection('predicted_labels', self.predicted_labels)
+
 		return accuracy
 
 
 
 	def apply_activations_on_output(self,output_layer):
 
-		output_activation = tf.get_variable(name = name,shape = output_layer.shape)
-		output_activation[:,:,:,0] = tf.nn.sigmoid(output_layer[:,:,:,0])
-		output_activation[:,:,:,1] = tf.nn.sigmoid(output_layer[:,:,:,1])
-		output_activation[:,:,:,2] = tf.nn.sigmoid(output_layer[:,:,:,2])
-		output_activation[:,:,:,3] = tf.nn.sigmoid(output_layer[:,:,:,3])
-		output_activation[:,:,:,4] = tf.nn.sigmoid(output_layer[:,:,:,4])
-		output_activation[:,:,:,5:5+self.number_of_classes] = tf.nn.softmax(output_layer[:,:,:,5:5+self.number_of_classes],axis = 3)
+		
+		x= tf.reshape(tf.nn.sigmoid(output_layer[:,:,:,0]),[-1,num_of_cells,num_of_cells,1])
+		y = tf.reshape(tf.nn.sigmoid(output_layer[:,:,:,1]),[-1,num_of_cells,num_of_cells,1])
+		w= tf.reshape(tf.nn.sigmoid(output_layer[:,:,:,2]),[-1,num_of_cells,num_of_cells,1])
+		h = tf.reshape(tf.nn.sigmoid(output_layer[:,:,:,3]),[-1,num_of_cells,num_of_cells,1])
+		p = tf.reshape(tf.nn.sigmoid(output_layer[:,:,:,4]),[-1,num_of_cells,num_of_cells,1])
+		c = tf.nn.softmax(output_layer[:,:,:,5:5+self.number_of_classes],axis = 3)
+		output_activation = tf.concat([x,y,w,h,p,c],3)
 		return output_activation
 
 
@@ -226,7 +230,7 @@ class Cnn_Classifier:
 
 
 
-		self.yolo_detection_output = apply_activations_on_output(curr_dropout_layer)
+		self.yolo_detection_output = self.apply_activations_on_output(curr_dropout_layer)
 		tf.add_to_collection('yolo_detection_output',self.yolo_detection_output)
 		self.yolo_loss = self.build_yolo_loss(curr_dropout_layer)
 		self.accuracy = self.calculate_accuracy(curr_dropout_layer)
@@ -371,7 +375,7 @@ class Cnn_Classifier:
 		for i in range(input_images.shape[0]):
 			image = input_images[i].reshape(-1,input_images.shape[1],input_images.shape[2],input_images.shape[3])
 			yolo_out = self.sess.run([self.yolo_detection_output],feed_dict = {self.Input:image })
-			yolo_out = yolo_out[0].reshape(-1,cells_width,cells_width,26)
+			yolo_out = yolo_out[0].reshape(-1,cells_width,cells_width,25)
 			yolo_out = yolo_out.reshape(-1,26)
 			yolo_out = filter_with_nms(yolo_out,0.6,0.5,(input_images.shape[1],input_images.shape[2]))
 			for j in range(cells_width):

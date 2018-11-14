@@ -121,7 +121,7 @@ def build_yolo_output_np(imgs):
   max_boxes = map_labels_to_indeces(imgs)
   number_of_classes = len(hashed_indeces)
   ht = np.zeros(shape = (len(imgs),num_of_cells,num_of_cells))
-  yolo_output_np = np.zeros(shape = (len(imgs),num_of_cells,num_of_cells,number_of_classes+6))
+  yolo_output_np = np.zeros(shape = (len(imgs),num_of_cells,num_of_cells,number_of_classes+5))
   i=0
   for img in imgs:
     for box in img['objects']:
