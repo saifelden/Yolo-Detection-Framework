@@ -54,7 +54,7 @@ class Cnn_Classifier:
 			tf.add_to_collection('keep_prob',self.keep_prob)
 
 		self.sess = tf.Session()
-		self.lr_decaying_dict = {.60:0,.70:0,.80:0,.90:0,.95:0,.99:0,.996:0,.998:0,.999:0,.9992:0,.9994:0,.9996:0,.9998:0,.9999:0}
+		self.lr_decaying_dict = {.42:0,.50:0,.60:0,.70:0,.80:0,.90:0,.91:0,.92:0,.93:0,.94:0,.95:0,.99:0,.996:0,.998:0,.999:0,.9992:0,.9994:0,.9996:0,.9998:0,.9999:0}
 		self.classifier_name = classifier_name
 		self.batch_size = 5000
 		if not os.path.exists(self.classifier_name):
@@ -106,7 +106,7 @@ class Cnn_Classifier:
 
 	def build_yolo_loss(self,output_layer):
 
-		obj_idxs = tf.where(self.Output[:,:,:,0] >0)
+		obj_idxs = tf.where(self.Output[:,:,:,4] >0)
 		true_output_obj = tf.gather_nd(self.Output,obj_idxs)
 		predicted_output_obj= tf.gather_nd(output_layer,obj_idxs)
  
@@ -116,7 +116,7 @@ class Cnn_Classifier:
 		self.obj_height_loss  = tf.reduce_sum(tf.square(tf.subtract(predicted_output_obj[:,3],true_output_obj[:,3])))
 		self.obj_coord = tf.multiply(self.lambda_obj,tf.add(tf.add(self.obj_x_loss,self.obj_y_loss),tf.add(self.obj_height_loss,self.obj_width_loss)))
 
-		noobj_idxs = tf.where(self.Output[:,:,:,0] < 1)
+		noobj_idxs = tf.where(self.Output[:,:,:,4] < 1)
 		true_output_noobj = tf.gather_nd(self.Output,noobj_idxs)
 		predicted_output_noobj= tf.gather_nd(output_layer,noobj_idxs)
 
@@ -145,7 +145,7 @@ class Cnn_Classifier:
 		# true_output_noobj = tf.gather_nd(self.Output,noobj_idxs)
 		# predicted_output_noobj= tf.gather_nd(output_layer,noobj_idxs)
 		
-		self.predicted_labels = tf.argmax(predicted_output_obj,axis = 1)
+		self.predicted_labels = tf.argmax(predicted_output_obj[:,5:5+self.number_of_classes],axis = 1)
 		self.true_labels = tf.argmax(true_output_obj[:,5:5+self.number_of_classes],axis = 1)
 		correct = tf.equal(self.predicted_labels,self.true_labels)
 		accuracy = tf.reduce_mean(tf.cast(correct, tf.float32))
@@ -232,8 +232,8 @@ class Cnn_Classifier:
 
 		self.yolo_detection_output = self.apply_activations_on_output(curr_dropout_layer)
 		tf.add_to_collection('yolo_detection_output',self.yolo_detection_output)
-		self.yolo_loss = self.build_yolo_loss(curr_dropout_layer)
-		self.accuracy = self.calculate_accuracy(curr_dropout_layer)
+		self.yolo_loss = self.build_yolo_loss(self.yolo_detection_output)
+		self.accuracy = self.calculate_accuracy(self.yolo_detection_output)
 		tf.add_to_collection('accuracy',self.accuracy)
 		self.optimizer= tf.train.AdamOptimizer(learning_rate=self.learning_rate).minimize(self.yolo_loss)
 
@@ -245,12 +245,18 @@ class Cnn_Classifier:
 		self.sess.run(tf.global_variables_initializer())
 
 	def decaying_learning_rate(self,curr_acc,saver):
+		dict_len = len(self.lr_decaying_dict.items())
 
-		for key,value in self.lr_decaying_dict.items():
-			if key < curr_acc and value ==0:
+		lr_list= list(self.lr_decaying_dict.items())
+		for i in range(dict_len):
+			key = lr_list[i][0]
+			value = lr_list[i][1]
+			if i+1 < dict_len:
+				next_key = lr_list[i+1][0]
+			if key < curr_acc and next_key > curr_acc and value <10:
 				save_path = saver.save(self.sess, self.classifier_name+"/model_"+str(key*100))
-				self.learning_rate = self.learning_rate/10
-				self.lr_decaying_dict[key]=1
+				self.learning_rate = self.learning_rate/1
+				self.lr_decaying_dict[key]+=1
 				print("Model with accuracy higher than "+str(key)+" are saved in path: %s" % save_path)
 				break
 
@@ -289,8 +295,8 @@ class Cnn_Classifier:
 				# layers_prints= self.sess.run(self.all_print_layers,feed_dict={self.Input:input_batch,self.Output: output_batch,self.keep_prob :self.dropout})
 				avg_accuracy += results[1]
 				avg_loss += results[2]
-				if it%10==0:
-					print('the accuracy of current batch '+str(i)+'/'+str(number_of_batches)+' with accuracy: %'+str(results[1]*100))
+
+				print('the accuracy of current batch '+str(i)+'/'+str(number_of_batches)+' with accuracy: %'+str(results[1]*100))
 			
 			
 			avg_accuracy /=number_of_batches
