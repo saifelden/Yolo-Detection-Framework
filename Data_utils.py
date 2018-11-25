@@ -125,10 +125,10 @@ def build_yolo_output_np(imgs):
   i=0
   for img in imgs:
     for box in img['objects']:
-      cell_coord = calculate_nearest_cell(box,(img['width'],img['height']))
+      cell_coord = calculate_nearest_cell(box,(resized_shape[0],resized_shape[1]))
       if ht[i][cell_coord[0]][cell_coord[1]] == 1:
         continue
-      cx,cy,w,h = set_yolo_output_param(box,(img['width'],img['height']))
+      cx,cy,w,h = set_yolo_output_param(box,(resized_shape[0],resized_shape[1]))
       c = np.zeros(number_of_classes)
       c[hashed_labels[box['label']]]=1
       value = np.concatenate((np.array([cx,cy,w,h,1]),c),axis =0)
