@@ -125,7 +125,7 @@ def build_yolo_output_np(imgs):
   i=0
   for img in imgs:
     for box in img['objects']:
-      cell_coord = calculate_nearest_cell(box,(resized_shape[0],resized_shape[1]))
+      cell_coord = calculate_nearest_cell(box,(img['width'],img['height']))
       if ht[i][cell_coord[0]][cell_coord[1]] == 1:
         continue
       cx,cy,w,h = set_yolo_output_param(box,(resized_shape[0],resized_shape[1]))
@@ -157,6 +157,29 @@ def write_nparray_to_file(np_arr,filename = "imgs"):
 def load_nparray_from_file(filename = "imgs"):
   np_array = np.load(filename)
   return np_array
+
+
+def apply_jitter(jitter,imgs):
+
+  width = int((1.- jitter)*imgs.shape[1])
+  height = int((1. -jitter)* imgs.shape[2])
+
+  width_range = imgs.shape[1] - width
+  height_range = imgs.shape[2] - height
+
+  random_x = np.random.randint(0,width_range,[1])[0]
+  random_y = np.random.randint(0,height_range,[1])[0]
+  cropped_imgs = imgs[:,random_x:random_x+width,random_y:random_y+height,0:3]
+
+  noised_imgs = np.random.randint(0,255,size= imgs.shape,dtype = "uint8")
+ 
+  noised_imgs[:,random_x:random_x+width,random_y:random_y+height] = cropped_imgs
+
+  noised_imgs = noised_imgs.astype(np.uint8)
+  return noised_imgs
+
+
+
 
 
 

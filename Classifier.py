@@ -10,8 +10,8 @@ class Cnn_Classifier:
 
 	def __init__(self,classifier_name,input_shape = [None,28,28,1],output_shape = [None,9,9,25],conv_layers = [(32,5),(64,5),(128,3),(256,2),(256,1)]
 		,pooling_layers = [1,1,1,0,0],dropout_layers=[1,1,1,1,1], batchnorm_layers = [1,1,1,1,1],activation_type = "relu",pool_type='avg'
-		,learning_rate = 0.0003,dropout=.75,define_weights = True,lambda_obj=5.,lambda_noobj=0.5):
-		
+		,learning_rate = 0.0003,dropout=.75,define_weights = True,lambda_obj=5.,lambda_noobj=0.5,lambda_coord=20):
+	
 		self.weights_list = []
 		self.biases_list = []
 		self.layers_num = len(conv_layers)
@@ -26,6 +26,7 @@ class Cnn_Classifier:
 		self.learning_rate = learning_rate
 		self.lambda_noobj = lambda_noobj
 		self.lambda_obj = lambda_obj
+		self.lambda_coord = lambda_coord
 		self.number_of_classes = output_shape[3]-5
 		self.input_shape = input_shape
 		self.output_shape = output_shape
@@ -54,7 +55,12 @@ class Cnn_Classifier:
 			tf.add_to_collection('keep_prob',self.keep_prob)
 
 		self.sess = tf.Session()
-		self.lr_decaying_dict = {.42:0,.50:0,.60:0,.70:0,.80:0,.90:0,.91:0,.92:0,.93:0,.94:0,.95:0,.99:0,.996:0,.998:0,.999:0,.9992:0,.9994:0,.9996:0,.9998:0,.9999:0}
+		under_90 = np.linspace(0,0.9,num=1000)
+		above_90 = np.linspace(0.9,1,num=10000)
+		lr_list = np.concatenate([under_90[:-1],above_90],axis=0)
+		values = np.zeros(shape = [124])
+		self.lr_decaying_dict = dict(zip(lr_list,values))
+
 		self.classifier_name = classifier_name
 		self.batch_size = 5000
 		if not os.path.exists(self.classifier_name):
@@ -80,9 +86,9 @@ class Cnn_Classifier:
 	def restore_model(self,checkpoint='75'):
 
 		# saver = tf.train.Saver()
-		saver = tf.train.import_meta_graph(self.classifier_name+"/model_"+str(checkpoint)+'.0.meta')
+		saver = tf.train.import_meta_graph(self.classifier_name+"/model_"+str(checkpoint)+'.meta')
 
-		saver.restore(self.sess, self.classifier_name+"/model_"+str(checkpoint)+'.0')
+		saver.restore(self.sess, self.classifier_name+"/model_"+str(checkpoint))
 		self.yolo_detection_output = tf.get_collection('yolo_detection_output')[0]
 		self.optimizer = tf.get_collection('optimizer')[0]
 		self.accuracy = tf.get_collection('accuracy')[0]
@@ -104,35 +110,71 @@ class Cnn_Classifier:
 
 		return shuffled_features,shuffled_output
 
+	def calculate_coord(self,mat):
+
+		center_x = mat[:,0]
+		center_y = mat[:,1]
+		width = mat[:,2]
+		height = mat[:,3]
+
+		half_width = (width/2.)
+		half_height = (height/2.)
+		x0 = center_x - half_width
+		x1 = center_x + half_width
+		y0 = center_y - half_height
+		y1 = center_y + half_height
+
+		return x0,y0,x1,y1
+
+	def calculate_iou(self,predicted_output,true_output):
+
+		#calculate the x0,y0,x1,y1 for predicted_output
+		predicted_coord = self.calculate_coord(predicted_output)
+		true_coord = self.calculate_coord(true_output)
+
+		xmin = tf.math.maximum(predicted_coord[0],true_coord[0])
+		ymin = tf.math.maximum(predicted_coord[1],true_coord[1])
+		xmax = tf.math.minimum(predicted_coord[2],true_coord[2])
+		ymax = tf.math.minimum(predicted_coord[3],true_coord[3])
+
+		intersection = (xmax - xmin)*(ymax - ymin)
+
+		predicted_area = (predicted_coord[2]-predicted_coord[0])*(predicted_coord[3]-predicted_coord[1])
+		true_area = (true_coord[2]-true_coord[0])*(true_coord[3]-true_coord[1])
+		union = predicted_area + true_area - intersection
+
+		return intersection/tf.math.maximum(union,1)
+
 	def build_yolo_loss(self,output_layer):
 
+		#Quering the cells with true bounding boxes
 		obj_idxs = tf.where(self.Output[:,:,:,4] >0)
 		true_output_obj = tf.gather_nd(self.Output,obj_idxs)
 		predicted_output_obj= tf.gather_nd(output_layer,obj_idxs)
- 
-		self.obj_x_loss= tf.reduce_sum(tf.square(tf.subtract(predicted_output_obj[:,0],true_output_obj[:,0])))
-		self.obj_y_loss = tf.reduce_sum(tf.square(tf.subtract(predicted_output_obj[:,1],true_output_obj[:,1])))
-		self.obj_width_loss = tf.reduce_sum(tf.square(tf.subtract(predicted_output_obj[:,2],true_output_obj[:,2])))
-		self.obj_height_loss  = tf.reduce_sum(tf.square(tf.subtract(predicted_output_obj[:,3],true_output_obj[:,3])))
-		self.obj_coord = tf.multiply(self.lambda_obj,tf.add(tf.add(self.obj_x_loss,self.obj_y_loss),tf.add(self.obj_height_loss,self.obj_width_loss)))
 
+		#Query the cells with empty content
 		noobj_idxs = tf.where(self.Output[:,:,:,4] < 1)
 		true_output_noobj = tf.gather_nd(self.Output,noobj_idxs)
 		predicted_output_noobj= tf.gather_nd(output_layer,noobj_idxs)
+ 
+		self.x_loss= tf.reduce_sum(tf.square(tf.subtract(output_layer[:,:,:,0],self.Output[:,:,:,0])))
+		self.y_loss = tf.reduce_sum(tf.square(tf.subtract(output_layer[:,:,:,1],self.Output[:,:,:,1])))
+		self.width_loss = tf.reduce_sum(tf.square(tf.subtract(output_layer[:,:,:,2],self.Output[:,:,:,2])))
+		self.height_loss  = tf.reduce_sum(tf.square(tf.subtract(output_layer[:,:,:,3],self.Output[:,:,:,3])))
+		self.coord = tf.multiply(self.lambda_coord,tf.add(tf.add(self.x_loss,self.y_loss),tf.add(self.height_loss,self.width_loss)))
 
-		self.noobj_x_loss = tf.reduce_sum(tf.square(tf.subtract(predicted_output_noobj[:,0],true_output_noobj[:,0])))
-		self.noobj_y_loss = tf.reduce_sum(tf.square(tf.subtract(predicted_output_noobj[:,1],true_output_noobj[:,1])))
-		self.noobj_width_loss = tf.reduce_sum(tf.square(tf.subtract(predicted_output_noobj[:,2],true_output_noobj[:,2])))
-		self.noobj_height_loss  = tf.reduce_sum(tf.square(tf.subtract(predicted_output_noobj[:,3],true_output_noobj[:,3])))
-		self.noobj_coord = tf.multiply(self.lambda_noobj,tf.add(tf.add(self.noobj_x_loss,self.noobj_y_loss),tf.add(self.noobj_height_loss,
-			self.noobj_width_loss)))
+		self.probility_obj =  self.calculate_iou(predicted_output_obj,true_output_obj)
+		self.probility_obj = tf.multiply(self.lambda_obj,self.probility_obj)
+		self.probility_noobj = self.calculate_iou(predicted_output_noobj,true_output_noobj)
+		self.probility_noobj = tf.multiply(self.lambda_noobj,self.probility_noobj)
 
-		self.probility_loss =  tf.reduce_sum(tf.square(tf.subtract(output_layer[:,:,:,4],self.Output[:,:,:,4])))
+		self.probility_loss = tf.add(tf.reduce_sum(tf.square(tf.subtract(self.probility_obj,true_output_obj[:,4]))),
+			tf.reduce_sum(tf.square(tf.subtract(self.probility_noobj,true_output_noobj[:,4]))))
 
 		self.classes_loss = tf.reduce_sum(tf.square(tf.subtract(output_layer[:,:,:,5:5+self.number_of_classes],
 			self.Output[:,:,:,5:5+self.number_of_classes])))
 
-		self.total_loss = tf.add(tf.add(self.obj_coord,self.noobj_coord),tf.add(self.probility_loss,self.classes_loss))
+		self.total_loss = tf.add(self.probility_loss,tf.add(self.coord,self.classes_loss))
 		return self.total_loss
 
 	def calculate_accuracy(self,output_layer):
@@ -244,22 +286,11 @@ class Cnn_Classifier:
 
 		self.sess.run(tf.global_variables_initializer())
 
-	def decaying_learning_rate(self,curr_acc,saver):
-		dict_len = len(self.lr_decaying_dict.items())
-
-		lr_list= list(self.lr_decaying_dict.items())
-		for i in range(dict_len):
-			key = lr_list[i][0]
-			value = lr_list[i][1]
-			if i+1 < dict_len:
-				next_key = lr_list[i+1][0]
-			if key < curr_acc and next_key > curr_acc and value <10:
-				save_path = saver.save(self.sess, self.classifier_name+"/model_"+str(key*100))
-				self.learning_rate = self.learning_rate/1
-				self.lr_decaying_dict[key]+=1
-				print("Model with accuracy higher than "+str(key)+" are saved in path: %s" % save_path)
-				break
-
+	def decaying_learning_rate(self,curr_acc,saver,it):
+		if it %10 ==0:
+			save_path = saver.save(self.sess, self.classifier_name+"/model_"+str(it))
+			self.learning_rate = self.learning_rate/1
+			print("Model with accuracy higher than "+str(int(curr_acc*100))+" are saved in path: %s" % save_path)
 
 
 	def train_classifier(self,input_images,output_encoded,testing_input,testing_output,iterations_num):
@@ -291,6 +322,7 @@ class Cnn_Classifier:
 				# import ipdb;ipdb.set_trace()
 				input_batch = input_images[start:end]
 				output_batch  = output_encoded[start:end]
+				input_batch = apply_jitter(0.1,input_batch)
 				results= self.sess.run([self.optimizer,self.accuracy,self.yolo_loss],feed_dict={self.Input:input_batch,self.Output: output_batch,self.keep_prob :self.dropout})
 				# layers_prints= self.sess.run(self.all_print_layers,feed_dict={self.Input:input_batch,self.Output: output_batch,self.keep_prob :self.dropout})
 				avg_accuracy += results[1]
@@ -303,10 +335,10 @@ class Cnn_Classifier:
 			avg_loss /= number_of_batches
 
 			saver = tf.train.Saver()
-			self.decaying_learning_rate(avg_accuracy,saver)
+			self.decaying_learning_rate(avg_accuracy,saver,it)
 
 			print('the accuracy of the epoch '+str(it+1)+' is : %'+str(avg_accuracy*100.0)+' with loss = '+str(avg_loss))
-			self.test_classifier(input_images = testing_input,output_classes = testing_output)
+			#self.test_classifier(input_images = testing_input,output_classes = testing_output)
 			print("------>>>>>"+str(it+1))
 			input_images,output_encoded = self.shuffle_data(input_images,output_encoded)
 
@@ -364,7 +396,7 @@ class Cnn_Classifier:
 
 
 	def compare_predict_with_true(self,input_images,true_output):
-		yolo_out = self.sess.run([self.yolo_detection_output],feed_dict = {self.Input:input_images })
+		yolo_out = self.sess.run(self.yolo_detection_output,feed_dict = {self.Input:input_images,self.keep_prob:1 })
 		for i in range(yolo_out[0].shape[0]):
 			import ipdb;ipdb.set_trace()
 			print(yolo_out[0][i])
@@ -372,18 +404,18 @@ class Cnn_Classifier:
 			print(true_output[i])
 
 
-	def test_classifier_results(self,input_images):
+	def test_classifier_results(self,input_images,output):
 
 
-		yolo_out = self.sess.run([self.yolo_detection_output],feed_dict = {self.Input:input_images })
+		yolo_out = self.sess.run([self.yolo_detection_output],feed_dict = {self.Input:input_images,self.keep_prob:1})
 
 		cells_width = self.output_shape[1]
 		for i in range(input_images.shape[0]):
 			image = input_images[i].reshape(-1,input_images.shape[1],input_images.shape[2],input_images.shape[3])
-			yolo_out = self.sess.run([self.yolo_detection_output],feed_dict = {self.Input:image })
+			yolo_out = self.sess.run([self.yolo_detection_output],feed_dict = {self.Input:image,self.keep_prob:1})
 			yolo_out = yolo_out[0].reshape(-1,cells_width,cells_width,25)
-			yolo_out = yolo_out.reshape(-1,26)
-			yolo_out = filter_with_nms(yolo_out,0.6,0.5,(input_images.shape[1],input_images.shape[2]))
+			# yolo_out = yolo_out.reshape(-1,25)
+			# yolo_out = filter_with_nms(yolo_out,0.6,0.5,(input_images.shape[1],input_images.shape[2]))
 			for j in range(cells_width):
 				for k in range(cells_width):
 					coord = yolo_out[0][j][k][0:4]
