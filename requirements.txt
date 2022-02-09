@@ -56,7 +56,7 @@ simplegeneric==0.8.1
 six==1.11.0
 sort==0.1.0
 tensorboard==1.11.0
-tensorflow-gpu==1.11.0
+tensorflow-gpu==2.5.3
 termcolor==1.1.0
 toolz==0.9.0
 tqdm==4.28.1
