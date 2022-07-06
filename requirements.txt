@@ -15,7 +15,7 @@ decorator==4.3.0
 gast==0.2.0
 grpcio==1.15.0
 h5py==2.8.0
-html5lib==0.9999999
+html5lib==0.999999999
 idna==2.6
 ipdb==0.11
 ipython==7.0.1
